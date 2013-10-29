@@ -65,6 +65,10 @@ public class TomcatBusListener implements LifecycleListener {
 
                         @Override
                         public boolean accept(final ClusterMessage clusterMessage) {
+                            if (MessageWrapper.class.isInstance(clusterMessage)) {
+                                return true;
+                            }
+
                             final String pkg = clusterMessage.getClass().getPackage().getName();
                             for (final String exclude : excludePackages) {
                                 if (pkg.startsWith(exclude)) {

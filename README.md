@@ -40,8 +40,8 @@ Just add tomcat-bus.jar in your tomcat `common.loader` and add in your server.xm
 
 The listener supports the following configurations:
 
-* includePackages: comma separated list of event package which should be taken into account
-* excludePackages: comma separated list of event package which should be ignored (by default tomcat and tomee internal events are ignored)
+* includePackages: comma separated list of event package which should be taken into account - (only relevant if you send children of `ClusterMessage`)
+* excludePackages: comma separated list of event package which should be ignored (by default tomcat and tomee internal events are ignored) - (only relevant if you send children of `ClusterMessage`)
 * eventHandler: the qualified name of the event handler you want to use (by default CDI one)
 
 # Sample project
