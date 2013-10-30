@@ -14,7 +14,7 @@ and define your implementation qualified name in `META-INF/services/com.github.r
 
 # Installation
 
-Just add tomcat-bus.jar in your tomcat `common.loader` and add in your server.xml the listener
+Just add tomcat-bus-core.jar in your tomcat `common.loader` and add in your server.xml the listener
 `com.github.rmannibucau.tomcat.bus.listener.TomcatBusListener`:
 
 ```xml
@@ -43,6 +43,29 @@ The listener supports the following configurations:
 * includePackages: comma separated list of event package which should be taken into account - (only relevant if you send children of `ClusterMessage`)
 * excludePackages: comma separated list of event package which should be ignored (by default tomcat and tomee internal events are ignored) - (only relevant if you send children of `ClusterMessage`)
 * eventHandler: the qualified name of the event handler you want to use (by default CDI one)
+
+# CDI
+
+`tomcat-bus-cdi.jar` provides an integration with CDI allowing you to send message from an interface ignoring the `Sender` API:
+
+```java
+@com.github.rmannibucau.tomcat.bus.cdi.Sender
+public interface MySender {
+    void claimSomething(Something s);
+}
+```
+
+Then calling `mySender.claimSomething(s);` you'll send a message over the cluster. To get `MySender`
+just use `@Inject`:
+
+```java
+public class Foo {
+    @Inject
+    private MySender sender;
+}
+```
+
+Note: `tomcat-bus-cdi` doesn't need to be in the container but can be delivered with applications (it is recommanded since it depends on deltaspike).
 
 # Sample project
 

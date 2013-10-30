@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<arquillian xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <group qualifier="tomee-cluster" default="true">
+    <container qualifier="tomee-1">
+      <configuration>
+        <property name="httpPort">1234</property>
+        <property name="stopPort">1235</property>
+        <property name="simpleLog">true</property>
+        <property name="cleanOnStartUp">true</property>
+        <property name="conf">src/test/tomee/conf1</property>
+        <property name="lib">${project.build.directory}/lib</property>
+        <property name="dir">${project.build.directory}/tomee1</property>
+        <property name="appWorkingDir">${project.build.directory}/app1</property>
+      </configuration>
+    </container>
+    <container qualifier="tomee-2">
+      <configuration>
+        <property name="httpPort">5678</property>
+        <property name="stopPort">5679</property>
+        <property name="simpleLog">true</property>
+        <property name="cleanOnStartUp">true</property>
+        <property name="conf">src/test/tomee/conf2</property>
+        <property name="lib">${project.build.directory}/lib</property>
+        <property name="dir">${project.build.directory}/tomee2</property>
+        <property name="appWorkingDir">${project.build.directory}/app2</property>
+      </configuration>
+    </container>
+  </group>
+</arquillian>

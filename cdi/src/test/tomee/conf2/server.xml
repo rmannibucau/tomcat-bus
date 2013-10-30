@@ -1,0 +1,17 @@
+<?xml version='1.0' encoding='utf-8'?>
+<Server port="5679" shutdown="SHUTDOWN">
+  <Listener className="com.github.rmannibucau.tomcat.bus.listener.TomcatBusListener"/>
+  <Listener className="org.apache.tomee.catalina.ServerListener"/>
+
+  <Service name="Catalina">
+    <Connector port="5678" protocol="HTTP/1.1" />
+
+    <Engine name="Catalina" defaultHost="localhost">
+      <Cluster className="org.apache.catalina.ha.tcp.SimpleTcpCluster"/>
+
+      <Host name="localhost" appBase="webapps"
+            unpackWARs="true" autoDeploy="true">
+      </Host>
+    </Engine>
+  </Service>
+</Server>
