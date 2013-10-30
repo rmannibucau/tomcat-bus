@@ -3,6 +3,8 @@ package com.github.rmannibucau.tomcat.bus.listener;
 import com.github.rmannibucau.tomcat.bus.api.EventHandler;
 import org.apache.catalina.Cluster;
 import org.apache.catalina.Container;
+import org.apache.catalina.ContainerEvent;
+import org.apache.catalina.ContainerListener;
 import org.apache.catalina.Context;
 import org.apache.catalina.Engine;
 import org.apache.catalina.Host;
@@ -22,7 +24,9 @@ import java.io.IOException;
 import java.io.ObjectOutputStream;
 import java.io.Serializable;
 import java.util.Iterator;
+import java.util.Map;
 import java.util.ServiceLoader;
+import java.util.concurrent.ConcurrentHashMap;
 
 public class TomcatBusListener implements LifecycleListener {
     private static final String[] EMPTY_ARRAY = new String[0];
@@ -33,12 +37,14 @@ public class TomcatBusListener implements LifecycleListener {
 
     private CatalinaCluster catalinaCluster;
     private EventHandler eventHandler;
-    private Server server;
+
+    private final Map<ClassLoader, String> contextByLoader = new ConcurrentHashMap<ClassLoader, String>();
+    private final Map<String, ClassLoader> loaderByContext = new ConcurrentHashMap<String, ClassLoader>();
 
     @Override
     public void lifecycleEvent(final LifecycleEvent event) {
         if (Lifecycle.BEFORE_INIT_EVENT.equals(event.getType()) && Server.class.isInstance(event.getSource())) {
-            server = Server.class.cast(event.getSource());
+            final Server server = Server.class.cast(event.getSource());
             final Service[] services = server.findServices();
             for (final Service service : services) {
                 final Container container = service.getContainer();
@@ -54,8 +60,6 @@ public class TomcatBusListener implements LifecycleListener {
                             eventHandler = new CdiEventHandler();
                         }
                     }
-
-                    Sender.setHandler(this);
 
                     catalinaCluster.addClusterListener(new ClusterListener() {
                         @Override
@@ -87,6 +91,37 @@ public class TomcatBusListener implements LifecycleListener {
                             return false;
                         }
                     });
+
+                    Sender.setHandler(this); // this is ATM a singleton by JVM
+                }
+
+                if (Engine.class.isInstance(container)) {
+                    for (final Container host : container.findChildren()) {
+                        host.addContainerListener(new ContainerListener() {
+                            @Override
+                            public void containerEvent(final ContainerEvent event) {
+                                if (Container.ADD_CHILD_EVENT.equals(event.getType()) && Context.class.isInstance(event.getData())) {
+                                    final Context context = Context.class.cast(event.getData());
+                                    loaderByContext.put(context.getName(), context.getLoader().getClassLoader());
+                                    if (context.getLoader() != null) {
+                                        contextByLoader.put(context.getLoader().getClassLoader(), context.getName());
+                                    }
+                                } else if (Container.REMOVE_CHILD_EVENT.equals(event.getType()) && Context.class.isInstance(event.getData())) {
+                                    final Context context = Context.class.cast(event.getData());
+                                    final String name = context.getName();
+                                    loaderByContext.remove(name);
+
+                                    // loader is null here so just loop over values
+                                    final Iterator<Map.Entry<ClassLoader, String>> iterator = contextByLoader.entrySet().iterator();
+                                    while (iterator.hasNext()) {
+                                        if (iterator.next().getValue().equals(name)) {
+                                            iterator.remove();
+                                        }
+                                    }
+                                }
+                            }
+                        });
+                    }
                 }
             }
         }
@@ -100,7 +135,14 @@ public class TomcatBusListener implements LifecycleListener {
         if (MessageWrapper.class.isInstance(message)) {
             final MessageWrapper messageWrapper = MessageWrapper.class.cast(message);
 
-            final ClassLoader loader = findContextLoader(messageWrapper.getContext());
+            ClassLoader loader = null;
+            if (messageWrapper.getContext() != null) {
+                loader = loaderByContext.get(messageWrapper.getContext());
+            }
+            if (loader == null) {
+                loader = Thread.currentThread().getContextClassLoader();
+            }
+
             final byte[] bytes = messageWrapper.getMessage();
 
             final ClassLoader oldLoader = Thread.currentThread().getContextClassLoader();
@@ -125,12 +167,8 @@ public class TomcatBusListener implements LifecycleListener {
         if (ClusterMessage.class.isInstance(message)) {
             catalinaCluster.send(ClusterMessage.class.cast(message));
         } else {
-            final Context context = findContext();
-
             final MessageWrapper wrapper = new MessageWrapper();
-            if (context != null) {
-                wrapper.setContext(context.getName());
-            }
+            wrapper.setContext(contextByLoader.get(Thread.currentThread().getContextClassLoader()));
             try {
                 wrapper.setMessage(serialize(message));
             } catch (final IOException e) {
@@ -160,50 +198,6 @@ public class TomcatBusListener implements LifecycleListener {
             oos.close();
         }
         return baos.toByteArray();
-    }
-
-    private ClassLoader findContextLoader(final String name) {
-        final ClassLoader loader = Thread.currentThread().getContextClassLoader();
-        for (final Service service : server.findServices()) {
-            final Container container = service.getContainer();
-            if (Engine.class.isInstance(container)) {
-                for (final Container host : container.findChildren()) {
-                    if (Host.class.isInstance(host)) {
-                        for (final Container context : host.findChildren()) {
-                            if (Context.class.isInstance(context)) {
-                                final Context castedContext = Context.class.cast(context);
-                                if (castedContext.getName().equals(name)) {
-                                    return castedContext.getLoader().getClassLoader();
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        return loader;
-    }
-
-    private Context findContext() {
-        final ClassLoader loader = Thread.currentThread().getContextClassLoader();
-        for (final Service service : server.findServices()) {
-            final Container container = service.getContainer();
-            if (Engine.class.isInstance(container)) {
-                for (final Container host : container.findChildren()) {
-                    if (Host.class.isInstance(host)) {
-                        for (final Container context : host.findChildren()) {
-                            if (Context.class.isInstance(context)) {
-                                final Context castedContext = Context.class.cast(context);
-                                if (castedContext.getLoader().getClassLoader() == loader) {
-                                    return castedContext;
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        return null;
     }
 
     public void setIncludePackages(final String value) {
