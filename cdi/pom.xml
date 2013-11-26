@@ -9,7 +9,7 @@
   </parent>
   <modelVersion>4.0.0</modelVersion>
 
-  <artifactId>cdi</artifactId>
+  <artifactId>tomcat-bus-cdi</artifactId>
   <name>Tomcat Bus :: CDI</name>
 
   <dependencies>
