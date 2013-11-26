@@ -30,8 +30,8 @@ public class TomcatBusTest {
             final TomcatBusListener listener1 = TomcatBusListener.class.cast(tomcat1.getServer().findLifecycleListeners()[0]);
             final TomcatBusListener listener2 = TomcatBusListener.class.cast(tomcat2.getServer().findLifecycleListeners()[0]);
 
-            final SimpleEventHandler handler1 = SimpleEventHandler.class.cast(listener1.getEventHandler());
-            final SimpleEventHandler handler2 = SimpleEventHandler.class.cast(listener2.getEventHandler());
+            final SimpleEventHandler handler1 = SimpleEventHandler.class.cast(listener1.getDefaultEventHandler());
+            final SimpleEventHandler handler2 = SimpleEventHandler.class.cast(listener2.getDefaultEventHandler());
 
             Sender.send(new Message(message)); // we'll use the last started listener to send the message but that's fine, we just need one
 

@@ -7,7 +7,6 @@ import org.apache.catalina.ContainerEvent;
 import org.apache.catalina.ContainerListener;
 import org.apache.catalina.Context;
 import org.apache.catalina.Engine;
-import org.apache.catalina.Host;
 import org.apache.catalina.Lifecycle;
 import org.apache.catalina.LifecycleEvent;
 import org.apache.catalina.LifecycleListener;
@@ -27,6 +26,7 @@ import java.util.Iterator;
 import java.util.Map;
 import java.util.ServiceLoader;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 
 public class TomcatBusListener implements LifecycleListener {
     private static final String[] EMPTY_ARRAY = new String[0];
@@ -36,10 +36,11 @@ public class TomcatBusListener implements LifecycleListener {
     private String[] excludePackages = DEFAULT_EXCLUDE;
 
     private CatalinaCluster catalinaCluster;
-    private EventHandler eventHandler;
+    private EventHandler defaultEventHandler;
 
     private final Map<ClassLoader, String> contextByLoader = new ConcurrentHashMap<ClassLoader, String>();
     private final Map<String, ClassLoader> loaderByContext = new ConcurrentHashMap<String, ClassLoader>();
+    private final ConcurrentMap<ClassLoader, EventHandler> handlerByContext = new ConcurrentHashMap<ClassLoader, EventHandler>();
 
     @Override
     public void lifecycleEvent(final LifecycleEvent event) {
@@ -52,47 +53,7 @@ public class TomcatBusListener implements LifecycleListener {
                 if (cluster != null && CatalinaCluster.class.isInstance(cluster)) {
                     catalinaCluster = CatalinaCluster.class.cast(cluster);
 
-                    if (eventHandler == null) {
-                        final Iterator<EventHandler> iterator = ServiceLoader.load(EventHandler.class, TomcatBusListener.class.getClassLoader()).iterator();
-                        if (iterator.hasNext()) {
-                            eventHandler = iterator.next();
-                        } else {
-                            eventHandler = new CdiEventHandler();
-                        }
-                    }
-
-                    catalinaCluster.addClusterListener(new ClusterListener() {
-                        @Override
-                        public void messageReceived(final ClusterMessage clusterMessage) {
-                            propagateLocally(clusterMessage);
-                        }
-
-                        @Override
-                        public boolean accept(final ClusterMessage clusterMessage) {
-                            if (MessageWrapper.class.isInstance(clusterMessage)) {
-                                return true;
-                            }
-
-                            final String pkg = clusterMessage.getClass().getPackage().getName();
-                            for (final String exclude : excludePackages) {
-                                if (pkg.startsWith(exclude)) {
-                                    return false;
-                                }
-                            }
-
-                            if (includePackages.length == 0) {
-                                return true;
-                            }
-                            for (final String include : includePackages) {
-                                if (pkg.startsWith(include)) {
-                                    return true;
-                                }
-                            }
-                            return false;
-                        }
-                    });
-
-                    Sender.setHandler(this); // this is ATM a singleton by JVM
+                    initCluster();
                 }
 
                 if (Engine.class.isInstance(container)) {
@@ -102,22 +63,10 @@ public class TomcatBusListener implements LifecycleListener {
                             public void containerEvent(final ContainerEvent event) {
                                 if (Container.ADD_CHILD_EVENT.equals(event.getType()) && Context.class.isInstance(event.getData())) {
                                     final Context context = Context.class.cast(event.getData());
-                                    loaderByContext.put(context.getName(), context.getLoader().getClassLoader());
-                                    if (context.getLoader() != null) {
-                                        contextByLoader.put(context.getLoader().getClassLoader(), context.getName());
-                                    }
+                                    initContext(context);
                                 } else if (Container.REMOVE_CHILD_EVENT.equals(event.getType()) && Context.class.isInstance(event.getData())) {
                                     final Context context = Context.class.cast(event.getData());
-                                    final String name = context.getName();
-                                    loaderByContext.remove(name);
-
-                                    // loader is null here so just loop over values
-                                    final Iterator<Map.Entry<ClassLoader, String>> iterator = contextByLoader.entrySet().iterator();
-                                    while (iterator.hasNext()) {
-                                        if (iterator.next().getValue().equals(name)) {
-                                            iterator.remove();
-                                        }
-                                    }
+                                    cleanUpContext(context);
                                 }
                             }
                         });
@@ -125,10 +74,110 @@ public class TomcatBusListener implements LifecycleListener {
                 }
             }
         }
+
+        // delivered in META-INF/context.xml
+        if (catalinaCluster == null && Context.class.isInstance(event.getSource()) && Lifecycle.START_EVENT.equals(event.getType())) {
+            final Context webapp = Context.class.cast(event.getSource());
+            Container parent = webapp.getParent();
+            while (parent != null && !Server.class.isInstance(parent)) {
+                parent = parent.getParent();
+            }
+            if (parent != null && Server.class.isInstance(parent)) {
+                final Server server = Server.class.cast(event.getSource());
+                final Service[] services = server.findServices();
+                for (final Service service : services) {
+                    final Container container = service.getContainer();
+                    final Cluster cluster = container.getCluster();
+                    if (cluster != null && CatalinaCluster.class.isInstance(cluster)) {
+                        catalinaCluster = CatalinaCluster.class.cast(cluster);
+                        initCluster();
+                    }
+
+                    initContext(webapp);
+                }
+            }
+        }
     }
 
-    public EventHandler getEventHandler() {
-        return eventHandler;
+    private void cleanUpContext(final Context context) {
+        final String name = context.getName();
+        final ClassLoader loader = loaderByContext.remove(name);
+        handlerByContext.remove(loader);
+
+        // loader is null here so just loop over values
+        final Iterator<Map.Entry<ClassLoader, String>> iterator = contextByLoader.entrySet().iterator();
+        while (iterator.hasNext()) {
+            if (iterator.next().getValue().equals(name)) {
+                iterator.remove();
+            }
+        }
+    }
+
+    private void initContext(final Context context) {
+        final ClassLoader classLoader = context.getLoader().getClassLoader();
+        loaderByContext.put(context.getName(), classLoader);
+        contextByLoader.put(classLoader, context.getName());
+        final ClassLoader old = Thread.currentThread().getContextClassLoader();
+        Thread.currentThread().setContextClassLoader(classLoader);
+        try {
+            handlerByContext.putIfAbsent(classLoader, findHandler(classLoader));
+        } finally {
+            Thread.currentThread().setContextClassLoader(old);
+        }
+    }
+
+    private void initCluster() {
+        if (defaultEventHandler == null) {
+            defaultEventHandler = findHandler(TomcatBusListener.class.getClassLoader());
+        }
+
+        catalinaCluster.addClusterListener(new ClusterListener() {
+            @Override
+            public void messageReceived(final ClusterMessage clusterMessage) {
+                propagateLocally(clusterMessage);
+            }
+
+            @Override
+            public boolean accept(final ClusterMessage clusterMessage) {
+                if (MessageWrapper.class.isInstance(clusterMessage)) {
+                    return true;
+                }
+
+                final String pkg = clusterMessage.getClass().getPackage().getName();
+                for (final String exclude : excludePackages) {
+                    if (pkg.startsWith(exclude)) {
+                        return false;
+                    }
+                }
+
+                if (includePackages.length == 0) {
+                    return true;
+                }
+                for (final String include : includePackages) {
+                    if (pkg.startsWith(include)) {
+                        return true;
+                    }
+                }
+                return false;
+            }
+        });
+
+        Sender.setHandler(this); // this is ATM a singleton by JVM
+    }
+
+    private EventHandler findHandler(final ClassLoader classLoader) {
+        final Iterator<EventHandler> iterator = ServiceLoader.load(EventHandler.class, classLoader).iterator();
+        if (iterator.hasNext()) {
+            return iterator.next();
+        }
+        if (defaultEventHandler != null) {
+            return defaultEventHandler;
+        }
+        return new CdiEventHandler();
+    }
+
+    public EventHandler getDefaultEventHandler() {
+        return defaultEventHandler;
     }
 
     public <T extends Serializable> void propagateLocally(final T message) {
@@ -148,14 +197,18 @@ public class TomcatBusListener implements LifecycleListener {
             final ClassLoader oldLoader = Thread.currentThread().getContextClassLoader();
             Thread.currentThread().setContextClassLoader(loader);
             try {
-                eventHandler.handle(deserialize(loader, bytes));
+                EventHandler handler = handlerByContext.get(loader);
+                if (handler == null) {
+                    handler = defaultEventHandler;
+                }
+                handler.handle(deserialize(loader, bytes));
             } catch (final Exception e) {
                 throw new IllegalArgumentException(e);
             } finally {
                 Thread.currentThread().setContextClassLoader(oldLoader);
             }
         } else {
-            eventHandler.handle(message);
+            defaultEventHandler.handle(message);
         }
     }
 
@@ -219,7 +272,7 @@ public class TomcatBusListener implements LifecycleListener {
     public void setEventHandler(final String classname) {
         try {
             final Class<?> clazz = TomcatBusListener.class.getClassLoader().loadClass(classname);
-            eventHandler = EventHandler.class.cast(clazz.newInstance());
+            defaultEventHandler = EventHandler.class.cast(clazz.newInstance());
         } catch (final Exception e) {
             throw new IllegalArgumentException(e);
         }

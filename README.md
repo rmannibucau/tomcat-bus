@@ -44,6 +44,8 @@ The listener supports the following configurations:
 * excludePackages: comma separated list of event package which should be ignored (by default tomcat and tomee internal events are ignored) - (only relevant if you send children of `ClusterMessage`)
 * eventHandler: the qualified name of the event handler you want to use (by default CDI one)
 
+Note: using `META-INF/services/com.github.rmannibucau.tomcat.bus.api.EventHandler` SPI you can provide the handler in your application.
+
 # CDI
 
 `tomcat-bus-cdi.jar` provides an integration with CDI allowing you to send message from an interface ignoring the `Sender` API:
