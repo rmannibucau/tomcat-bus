@@ -30,7 +30,11 @@ import java.util.concurrent.ConcurrentMap;
 
 public class TomcatBusListener implements LifecycleListener {
     private static final String[] EMPTY_ARRAY = new String[0];
-    private static final String[] DEFAULT_EXCLUDE = new String[]{ "org.apache.tomcat.", "org.apache.catalina", "org.apache.tomee." };
+    private static final String[] DEFAULT_EXCLUDE = new String[]{
+        "org.apache.tomcat.",
+        "org.apache.catalina.",
+        "org.apache.tomee."
+    };
 
     private String[] includePackages = EMPTY_ARRAY;
     private String[] excludePackages = DEFAULT_EXCLUDE;
