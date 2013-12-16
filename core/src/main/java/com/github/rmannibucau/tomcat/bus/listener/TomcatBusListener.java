@@ -185,10 +185,11 @@ public class TomcatBusListener implements LifecycleListener {
     }
 
     public <T extends Serializable> void propagateLocally(final T message) {
+        final Serializable msg;
+        ClassLoader loader = null;
         if (MessageWrapper.class.isInstance(message)) {
             final MessageWrapper messageWrapper = MessageWrapper.class.cast(message);
 
-            ClassLoader loader = null;
             if (messageWrapper.getContext() != null) {
                 loader = loaderByContext.get(messageWrapper.getContext());
             }
@@ -201,18 +202,32 @@ public class TomcatBusListener implements LifecycleListener {
             final ClassLoader oldLoader = Thread.currentThread().getContextClassLoader();
             Thread.currentThread().setContextClassLoader(loader);
             try {
-                EventHandler handler = handlerByContext.get(loader);
-                if (handler == null) {
-                    handler = defaultEventHandler;
-                }
-                handler.handle(deserialize(loader, bytes));
+                msg = deserialize(loader, bytes);
             } catch (final Exception e) {
                 throw new IllegalArgumentException(e);
             } finally {
                 Thread.currentThread().setContextClassLoader(oldLoader);
             }
         } else {
-            defaultEventHandler.handle(message);
+            msg = message;
+            loader = Thread.currentThread().getContextClassLoader();
+            if (loader == null) {
+                loader = TomcatBusListener.class.getClassLoader();
+            }
+        }
+
+        final ClassLoader oldLoader = Thread.currentThread().getContextClassLoader();
+        Thread.currentThread().setContextClassLoader(loader);
+        try {
+            EventHandler handler = handlerByContext.get(loader);
+            if (handler == null) {
+                handler = defaultEventHandler;
+            }
+            handler.handle(msg);
+        } catch (final Exception e) {
+            throw new IllegalArgumentException(e);
+        } finally {
+            Thread.currentThread().setContextClassLoader(oldLoader);
         }
     }
 
